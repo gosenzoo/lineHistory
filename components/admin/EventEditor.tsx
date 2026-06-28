@@ -22,6 +22,12 @@ const TYPE_BADGE: Record<RailwayEvent['type'], string> = {
   section_replace: 'bg-purple-800 text-purple-200',
 }
 
+function prevDay(dateStr: string): string {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  const dt = new Date(y, m - 1, d - 1)
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`
+}
+
 // ── tiny UI parts ─────────────────────────────────────────────────────────────
 
 function Label({ children }: { children: React.ReactNode }) {
@@ -61,8 +67,9 @@ interface Props {
 }
 
 export default function EventEditor({ event, data, onSave, onCancel }: Props) {
-  const [date, setDate]   = useState(event.date)
-  const [label, setLabel] = useState(event.label)
+  const [date, setDate]           = useState(event.date)
+  const [orderIndex, setOrderIndex] = useState(event.orderIndex)
+  const [label, setLabel]         = useState(event.label)
 
   // line_open: animation direction (stored in LineGeometry)
   const lineGeo   = event.type === 'line_open' ? data.geometries.find(g => g.lineId === event.lineId) : null
@@ -72,60 +79,93 @@ export default function EventEditor({ event, data, onSave, onCancel }: Props) {
   const startStName    = data.stations.find(s => s.id === loStationIds[0])?.name ?? '始点'
   const endStName      = data.stations.find(s => s.id === loStationIds[loStationIds.length - 1])?.name ?? '終点'
 
-  // line_extend: extension direction
+  // line_extend: extension direction + anim from
   const [extDir, setExtDir] = useState<'start' | 'end'>(
     event.type === 'line_extend' ? event.direction : 'end'
   )
+  const extGeo = event.type === 'line_extend' ? data.geometries.find(g => g.lineId === event.lineId) : null
+  const [extAnimFrom, setExtAnimFrom] = useState<'junction' | 'tip'>(extGeo?.extAnimFrom ?? 'junction')
+
+  // line_close: anim direction
+  const clGeo = event.type === 'line_close' ? data.geometries.find(g => g.lineId === event.lineId) : null
+  const [closeAnimDir, setCloseAnimDir] = useState<'start' | 'end'>(clGeo?.closeAnimDirection ?? 'end')
+
+  // station names for extend anim UI (use event's own date as preview basis)
+  const extLineStationIds = event.type === 'line_extend'
+    ? (() => {
+        const ms = computeMapState(data.stations, data.lines, data.events, prevDay(event.date))
+        return ms.activeLines.find(al => al.line.id === event.lineId)?.stationIds ?? []
+      })()
+    : []
+  const junctionStName = event.type === 'line_extend'
+    ? data.stations.find(s => s.id === (extDir === 'end'
+        ? extLineStationIds[extLineStationIds.length - 1]
+        : extLineStationIds[0]))?.name ?? '接続点'
+    : ''
+  const tipStName = event.type === 'line_extend'
+    ? data.stations.find(s => s.id === event.stationIds[extDir === 'end' ? event.stationIds.length - 1 : 0])?.name ?? '新端駅'
+    : ''
+
+  // station names for close anim UI
+  const clLineStationIds = event.type === 'line_close'
+    ? (() => {
+        const ms = computeMapState(data.stations, data.lines, data.events, prevDay(event.date))
+        return ms.activeLines.find(al => al.line.id === event.lineId)?.stationIds ?? []
+      })()
+    : []
+  const clStartStName = data.stations.find(s => s.id === clLineStationIds[0])?.name ?? '始点'
+  const clEndStName   = data.stations.find(s => s.id === clLineStationIds[clLineStationIds.length - 1])?.name ?? '終点'
 
   // station_open: after-station (insertion position)
   const [afterStationId, setAfterStationId] = useState<string | null>(
     event.type === 'station_open' ? event.afterStationId : null
   )
 
-  // Stations on the relevant line just before this event, for afterStation dropdown
   const stationsBeforeEvent = (() => {
     if (event.type !== 'station_open') return []
-    const yearBefore = parseInt(event.date) - 1
-    const ms = computeMapState(data.stations, data.lines, data.events, yearBefore)
+    const ms = computeMapState(data.stations, data.lines, data.events, prevDay(event.date))
     const stationIds = ms.activeLines.find(al => al.line.id === event.lineId)?.stationIds ?? []
     return stationIds.map(id => data.stations.find(s => s.id === id)).filter(Boolean) as typeof data.stations
   })()
 
   function handleSave() {
-    const year = parseInt(date)
-    if (!date || isNaN(year) || year < 1800 || year > 2200) {
-      alert('年を正しく入力してください')
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      alert('日付を正しく入力してください')
       return
     }
 
-    // Build updated event (type cannot change)
     let updatedEvent: RailwayEvent
     switch (event.type) {
       case 'line_open':
-        updatedEvent = { ...event, date, label }
+        updatedEvent = { ...event, date, orderIndex, label }
         break
       case 'station_open':
-        updatedEvent = { ...event, date, label, afterStationId }
+        updatedEvent = { ...event, date, orderIndex, label, afterStationId }
         break
       case 'line_extend':
-        updatedEvent = { ...event, date, label, direction: extDir }
+        updatedEvent = { ...event, date, orderIndex, label, direction: extDir }
         break
       default:
-        updatedEvent = { ...event, date, label }
+        updatedEvent = { ...event, date, orderIndex, label }
     }
 
     const newEvents = data.events
       .map(e => e.id === event.id ? updatedEvent : e)
-      .sort((a, b) => a.date.localeCompare(b.date))
+      .sort((a, b) => {
+        const d = a.date.localeCompare(b.date)
+        return d !== 0 ? d : a.orderIndex - b.orderIndex
+      })
 
-    // Update LineGeometry.animDirection when editing line_open
     let newGeometries = data.geometries
-    if (event.type === 'line_open') {
-      const exists = data.geometries.some(g => g.lineId === event.lineId)
+    const updateGeo = (lineId: string, patch: Partial<import('@/lib/types').LineGeometry>) => {
+      const exists = newGeometries.some(g => g.lineId === lineId)
       newGeometries = exists
-        ? data.geometries.map(g => g.lineId === event.lineId ? { ...g, animDirection: animDir } : g)
-        : [...data.geometries, { lineId: event.lineId, segments: [], animDirection: animDir }]
+        ? newGeometries.map(g => g.lineId === lineId ? { ...g, ...patch } : g)
+        : [...newGeometries, { lineId, segments: [], ...patch }]
     }
+    if (event.type === 'line_open')   updateGeo(event.lineId, { animDirection: animDir })
+    if (event.type === 'line_extend') updateGeo(event.lineId, { extAnimFrom })
+    if (event.type === 'line_close')  updateGeo(event.lineId, { closeAnimDirection: closeAnimDir })
 
     onSave({ ...data, events: newEvents, geometries: newGeometries })
   }
@@ -149,14 +189,24 @@ export default function EventEditor({ event, data, onSave, onCancel }: Props) {
         {stationName && <span className="text-sm text-slate-400">駅: <span className="text-white">{stationName}</span></span>}
       </div>
 
-      {/* Date + label (always editable) */}
+      {/* Date + orderIndex + label */}
       <div className="flex gap-3">
-        <div className="w-28 shrink-0">
-          <Label>年</Label>
+        <div className="w-40 shrink-0">
+          <Label>日付</Label>
           <input
-            type="text"
+            type="date"
             value={date}
             onChange={e => setDate(e.target.value)}
+            className="w-full bg-slate-700 text-white text-sm rounded px-3 py-1.5 border border-slate-600 focus:border-blue-400 outline-none"
+          />
+        </div>
+        <div className="w-20 shrink-0">
+          <Label>順番</Label>
+          <input
+            type="number"
+            min={0}
+            value={orderIndex}
+            onChange={e => setOrderIndex(Math.max(0, parseInt(e.target.value) || 0))}
             className="w-full bg-slate-700 text-white text-sm rounded px-3 py-1.5 border border-slate-600 focus:border-blue-400 outline-none"
           />
         </div>
@@ -186,18 +236,37 @@ export default function EventEditor({ event, data, onSave, onCancel }: Props) {
         </div>
       )}
 
-      {/* line_extend: extension direction */}
+      {/* line_extend: extension direction + anim */}
       {event.type === 'line_extend' && (
+        <>
+          <div>
+            <Label>延伸方向</Label>
+            <ToggleGroup value={extDir} onChange={setExtDir}
+              options={[
+                { value: 'start', label: '始点方向に延伸' },
+                { value: 'end',   label: '終点方向に延伸' },
+              ]} />
+          </div>
+          <div>
+            <Label>アニメーション開始端</Label>
+            <ToggleGroup value={extAnimFrom} onChange={setExtAnimFrom}
+              options={[
+                { value: 'junction', label: junctionStName },
+                { value: 'tip',      label: tipStName },
+              ]} />
+          </div>
+        </>
+      )}
+
+      {/* line_close: anim direction */}
+      {event.type === 'line_close' && (
         <div>
-          <Label>延伸方向</Label>
-          <ToggleGroup
-            value={extDir}
-            onChange={setExtDir}
+          <Label>消去開始端</Label>
+          <ToggleGroup value={closeAnimDir} onChange={setCloseAnimDir}
             options={[
-              { value: 'start', label: '始点方向に延伸' },
-              { value: 'end',   label: '終点方向に延伸' },
-            ]}
-          />
+              { value: 'start', label: clStartStName },
+              { value: 'end',   label: clEndStName },
+            ]} />
         </div>
       )}
 

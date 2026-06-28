@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef } from 'react'
-import type { Station, MapState, LineGeometry } from '@/lib/types'
+import type { Station, MapState, LineGeometry, CanvasExpansion } from '@/lib/types'
 import { buildLinePoints, catmullRomPath } from '@/lib/geometry'
 
 export interface PendingStation {
@@ -23,6 +23,8 @@ interface Props {
   onStationClick?: (id: string) => void
   onPlace?: (name: string, x: number, y: number) => void
   highlightStationIds?: string[]
+  highlightLineId?: string  // この路線をフルカラー表示、他は暗く
+  canvas?: CanvasExpansion
 }
 
 const VB_W = 800
@@ -38,6 +40,8 @@ export default function MapEditor({
   onStationClick,
   onPlace,
   highlightStationIds = [],
+  highlightLineId,
+  canvas,
 }: Props) {
   const svgRef = useRef<SVGSVGElement>(null)
   const [placingAt, setPlacingAt] = useState<{ x: number; y: number; name: string } | null>(null)
@@ -48,11 +52,12 @@ export default function MapEditor({
   ])
 
   function toSVGCoords(e: React.MouseEvent<SVGSVGElement>) {
-    const rect = e.currentTarget.getBoundingClientRect()
-    return {
-      x: Math.round(((e.clientX - rect.left) / rect.width) * VB_W),
-      y: Math.round(((e.clientY - rect.top) / rect.height) * VB_H),
-    }
+    const svg = e.currentTarget
+    const pt = svg.createSVGPoint()
+    pt.x = e.clientX
+    pt.y = e.clientY
+    const svgPt = pt.matrixTransform(svg.getScreenCTM()!.inverse())
+    return { x: Math.round(svgPt.x), y: Math.round(svgPt.y) }
   }
 
   function handleSVGClick(e: React.MouseEvent<SVGSVGElement>) {
@@ -83,25 +88,26 @@ export default function MapEditor({
       <div className="relative rounded-lg overflow-hidden border border-slate-600">
         <svg
           ref={svgRef}
-          viewBox={`0 0 ${VB_W} ${VB_H}`}
+          viewBox={`${-(canvas?.left ?? 0)} ${-(canvas?.top ?? 0)} ${VB_W + (canvas?.left ?? 0) + (canvas?.right ?? 0)} ${VB_H + (canvas?.top ?? 0) + (canvas?.bottom ?? 0)}`}
           className="w-full"
-          style={{ background: '#0f172a', cursor: mode !== 'readonly' ? 'crosshair' : 'default', aspectRatio: `${VB_W}/${VB_H}` }}
+          style={{ background: '#0f172a', cursor: mode !== 'readonly' ? 'crosshair' : 'default', aspectRatio: `${VB_W + (canvas?.left ?? 0) + (canvas?.right ?? 0)}/${VB_H + (canvas?.top ?? 0) + (canvas?.bottom ?? 0)}` }}
           onClick={handleSVGClick}
         >
           {/* Active lines with curves */}
           {mapState.activeLines.map(({ line, stationIds }) => {
             const geo = geometries.find(g => g.lineId === line.id)
             const pts = buildLinePoints(stationIds, stationMap, geo)
+            const isHL = !highlightLineId || line.id === highlightLineId
             return (
               <path
                 key={line.id}
                 d={catmullRomPath(pts)}
                 fill="none"
                 stroke={line.color}
-                strokeWidth={4}
+                strokeWidth={isHL ? 5 : 3}
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                opacity={0.5}
+                opacity={isHL ? 0.9 : 0.2}
               />
             )
           })}

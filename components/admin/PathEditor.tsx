@@ -41,7 +41,7 @@ export default function PathEditor({ data, initialLineId = '', onUpdate, onClose
   const maxYear = data.events.length > 0
     ? Math.max(...data.events.map(e => parseInt(e.date.slice(0, 4))))
     : 9999
-  const mapState = computeMapState(data.stations, data.lines, data.events, maxYear)
+  const mapState = computeMapState(data.stations, data.lines, data.events, `${maxYear}-12-31`)
   const stationMap = new Map(data.stations.map(s => [s.id, s]))
 
   const selectedActiveLine = mapState.activeLines.find(al => al.line.id === lineId)
@@ -73,11 +73,11 @@ export default function PathEditor({ data, initialLineId = '', onUpdate, onClose
   function toSVGCoords(e: React.MouseEvent): { x: number; y: number } {
     const svg = svgRef.current
     if (!svg) return { x: 0, y: 0 }
-    const rect = svg.getBoundingClientRect()
-    return {
-      x: Math.round(((e.clientX - rect.left) / rect.width) * VB_W),
-      y: Math.round(((e.clientY - rect.top) / rect.height) * VB_H),
-    }
+    const pt = svg.createSVGPoint()
+    pt.x = e.clientX
+    pt.y = e.clientY
+    const svgPt = pt.matrixTransform(svg.getScreenCTM()!.inverse())
+    return { x: Math.round(svgPt.x), y: Math.round(svgPt.y) }
   }
 
   function handleSubsegmentClick(e: React.MouseEvent, segIdx: number, insertIdx: number) {
@@ -127,7 +127,6 @@ export default function PathEditor({ data, initialLineId = '', onUpdate, onClose
   function handleSVGMouseUp() {
     if (bgDrag) { setBgDrag(null); return }
     if (dragState && !dragMovedRef.current) {
-      // click without drag → toggle selection
       const { segmentIdx, waypointIdx } = dragState
       setSelectedWP(prev =>
         prev?.segIdx === segmentIdx && prev?.wpIdx === waypointIdx
@@ -162,50 +161,47 @@ export default function PathEditor({ data, initialLineId = '', onUpdate, onClose
   }
 
   const segments = getSegments()
-
   const selectedWpData = selectedWP
     ? segments[selectedWP.segIdx]?.waypoints[selectedWP.wpIdx] ?? null
     : null
 
+  const ids        = selectedActiveLine?.stationIds ?? []
+  const startStName = stationMap.get(ids[0])?.name ?? '始点'
+  const endStName   = stationMap.get(ids[ids.length - 1])?.name ?? '終点'
+  const currentDir  = currentGeo?.animDirection ?? 'start'
+
+  const vbX = -(data.canvas?.left ?? 0)
+  const vbY = -(data.canvas?.top ?? 0)
+  const vbW = VB_W + (data.canvas?.left ?? 0) + (data.canvas?.right ?? 0)
+  const vbH = VB_H + (data.canvas?.top ?? 0) + (data.canvas?.bottom ?? 0)
+
   return (
-    <div className="flex flex-col gap-4 text-slate-200">
-      <div className="flex items-center justify-between">
-        <h2 className="font-bold text-base">パス編集</h2>
-        {onClose && (
-          <button onClick={onClose} className="text-slate-400 hover:text-white text-sm">
-            ✕ 閉じる
-          </button>
-        )}
-      </div>
+    <div className="h-full flex flex-col text-slate-200">
 
-      <div>
-        <label className="text-xs text-slate-400 block mb-1">編集する路線</label>
-        <select
-          value={lineId}
-          onChange={e => { setLineId(e.target.value); setSelectedWP(null) }}
-          className="w-full bg-slate-700 text-white text-sm rounded px-3 py-1.5 border border-slate-600 focus:border-blue-400 outline-none"
-        >
-          <option value="">路線を選択...</option>
-          {data.lines.map(l => (
-            <option key={l.id} value={l.id}>{l.name}</option>
-          ))}
-        </select>
-      </div>
+      {/* ── Top bar ─────────────────────────────────── */}
+      <div className="shrink-0 bg-slate-900 border-b border-slate-700 px-4 py-3 flex flex-col gap-2">
+        <div className="flex items-center gap-3">
+          {/* Line selector */}
+          <select
+            value={lineId}
+            onChange={e => { setLineId(e.target.value); setSelectedWP(null) }}
+            className="flex-1 bg-slate-700 text-white text-sm rounded px-3 py-1.5 border border-slate-600 focus:border-blue-400 outline-none"
+          >
+            <option value="">路線を選択...</option>
+            {data.lines.map(l => (
+              <option key={l.id} value={l.id}>{l.name}</option>
+            ))}
+          </select>
 
-      {lineId && (() => {
-        const ids          = selectedActiveLine?.stationIds ?? []
-        const startStName  = stationMap.get(ids[0])?.name ?? '始点'
-        const endStName    = stationMap.get(ids[ids.length - 1])?.name ?? '終点'
-        const currentDir   = currentGeo?.animDirection ?? 'start'
-        return (
-          <div>
-            <label className="text-xs text-slate-400 block mb-1.5">アニメーション開始端</label>
-            <div className="flex gap-2">
+          {/* Animation direction (shown when line is selected) */}
+          {lineId && (
+            <div className="flex gap-1 shrink-0">
               {(['start', 'end'] as const).map(dir => (
                 <button
                   key={dir}
                   onClick={() => saveGeo({ animDirection: dir })}
-                  className={`flex-1 text-sm py-1.5 rounded transition-colors
+                  title={`アニメーション開始: ${dir === 'start' ? startStName : endStName}`}
+                  className={`text-xs px-2.5 py-1.5 rounded transition-colors
                     ${currentDir === dir
                       ? 'bg-blue-600 text-white'
                       : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
@@ -214,20 +210,25 @@ export default function PathEditor({ data, initialLineId = '', onUpdate, onClose
                 </button>
               ))}
             </div>
-          </div>
-        )
-      })()}
+          )}
 
-      <div className="relative rounded-lg overflow-hidden border border-slate-600">
+          {onClose && (
+            <button onClick={onClose} className="text-slate-400 hover:text-white text-sm shrink-0 ml-1">✕</button>
+          )}
+        </div>
+      </div>
+
+      {/* ── Map (fills remaining height) ────────────── */}
+      <div className="flex-1 min-h-0 relative">
         <svg
           ref={svgRef}
-          viewBox={`0 0 ${VB_W} ${VB_H}`}
-          className="w-full"
+          viewBox={`${vbX} ${vbY} ${vbW} ${vbH}`}
+          className="w-full h-full"
           style={{
             background: '#0f172a',
-            aspectRatio: `${VB_W}/${VB_H}`,
             cursor: dragState ? 'grabbing' : 'default',
             userSelect: 'none',
+            display: 'block',
           }}
           onMouseMove={handleSVGMouseMove}
           onMouseUp={handleSVGMouseUp}
@@ -254,7 +255,7 @@ export default function PathEditor({ data, initialLineId = '', onUpdate, onClose
             />
           )}
 
-          {/* Background: other lines dimmed */}
+          {/* Other lines (dimmed) */}
           {mapState.activeLines.map(({ line, stationIds }) => {
             if (line.id === lineId) return null
             const geo = data.geometries.find(g => g.lineId === line.id)
@@ -272,7 +273,7 @@ export default function PathEditor({ data, initialLineId = '', onUpdate, onClose
             )
           })}
 
-          {/* Selected line: full curved path */}
+          {/* Selected line */}
           {selectedActiveLine && (() => {
             const pts = buildLinePoints(selectedActiveLine.stationIds, stationMap, currentGeo)
             return (
@@ -298,7 +299,7 @@ export default function PathEditor({ data, initialLineId = '', onUpdate, onClose
               </g>
             ))}
 
-          {/* Clickable subsegments + waypoint handles for selected line */}
+          {/* Clickable subsegments + waypoint handles */}
           {lineId && segments.map((seg, si) => {
             const fromPos = stationMap.get(seg.fromStationId)
             const toPos = stationMap.get(seg.toStationId)
@@ -312,7 +313,6 @@ export default function PathEditor({ data, initialLineId = '', onUpdate, onClose
 
             return (
               <g key={`seg-${si}`}>
-                {/* Transparent thick click zones */}
                 {subPoints.slice(0, -1).map((p1, j) => {
                   const p2 = subPoints[j + 1]
                   return (
@@ -328,7 +328,6 @@ export default function PathEditor({ data, initialLineId = '', onUpdate, onClose
                   )
                 })}
 
-                {/* Waypoint handles */}
                 {seg.waypoints.map((wp, wi) => {
                   const prev = wi === 0 ? fromPos : seg.waypoints[wi - 1]
                   const isSelected = selectedWP?.segIdx === si && selectedWP?.wpIdx === wi
@@ -336,13 +335,11 @@ export default function PathEditor({ data, initialLineId = '', onUpdate, onClose
 
                   return (
                     <g key={`wp-${wi}`}>
-                      {/* Guide line */}
                       <line
                         x1={prev.x} y1={prev.y} x2={wp.x} y2={wp.y}
                         stroke="#94A3B8" strokeWidth={1} strokeDasharray="4 3" opacity={0.6}
                         style={{ pointerEvents: 'none' }}
                       />
-                      {/* Handle */}
                       <circle
                         cx={wp.x} cy={wp.y}
                         r={isSelected ? 4 : 2.5}
@@ -353,13 +350,11 @@ export default function PathEditor({ data, initialLineId = '', onUpdate, onClose
                         onMouseDown={e => handleWpMouseDown(e, si, wi)}
                         onDoubleClick={e => handleWpDoubleClick(e, si, wi)}
                       />
-                      {/* Tension label (only when != 1.0) */}
                       {tension !== 1.0 && (
                         <text
                           x={wp.x} y={wp.y - 14}
                           textAnchor="middle" fontSize={10}
-                          fill="#94A3B8"
-                          fontFamily="monospace"
+                          fill="#94A3B8" fontFamily="monospace"
                           style={{ pointerEvents: 'none' }}
                         >
                           {tension.toFixed(1)}
@@ -372,66 +367,68 @@ export default function PathEditor({ data, initialLineId = '', onUpdate, onClose
             )
           })}
         </svg>
-
-        <div className="absolute bottom-2 left-2 bg-slate-800/80 text-slate-300 text-xs px-2 py-1 rounded pointer-events-none">
-          路線上クリック: WP追加　／　WPクリック: 選択・曲がり調整　／　ドラッグ: 移動　／　ダブルクリック: 削除
-        </div>
       </div>
 
-      {/* Tension slider — shown when a waypoint is selected */}
-      {selectedWP && selectedWpData && (
-        <div className="bg-slate-800 border border-slate-600 rounded-lg px-4 py-3">
-          <div className="flex items-center gap-4">
-            <div className="shrink-0">
-              <p className="text-xs text-slate-400 mb-0.5">曲がり強度</p>
-              <p className="text-xs text-slate-500">区間 {selectedWP.segIdx + 1} — WP {selectedWP.wpIdx + 1}</p>
-            </div>
-            <div className="flex-1 flex items-center gap-3">
-              <span className="text-xs text-slate-500 w-6">直線</span>
-              <input
-                type="range"
-                min="0"
-                max="3"
-                step="0.1"
-                value={selectedWpData.tension ?? 1.0}
-                onChange={e => handleTensionChange(selectedWP.segIdx, selectedWP.wpIdx, parseFloat(e.target.value))}
-                className="flex-1 accent-cyan-400"
-              />
-              <span className="text-xs text-slate-500 w-8">強い</span>
-              <span className="text-sm font-mono text-cyan-300 w-8 text-right">
-                {(selectedWpData.tension ?? 1.0).toFixed(1)}
-              </span>
-            </div>
-            <button
-              onClick={() => handleTensionChange(selectedWP.segIdx, selectedWP.wpIdx, 1.0)}
-              className="text-xs text-slate-400 hover:text-white shrink-0"
-            >
-              リセット
-            </button>
-          </div>
-          <div className="mt-2 flex gap-2">
-            {[0, 0.5, 1.0, 1.5, 2.0, 3.0].map(v => (
-              <button
-                key={v}
-                onClick={() => handleTensionChange(selectedWP.segIdx, selectedWP.wpIdx, v)}
-                className={`text-xs px-2 py-0.5 rounded transition-colors
-                  ${(selectedWpData.tension ?? 1.0) === v
-                    ? 'bg-cyan-600 text-white'
-                    : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
-              >
-                {v === 1.0 ? '1.0 (標準)' : v.toFixed(1)}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* ── Bottom bar ──────────────────────────────── */}
+      <div className="shrink-0 bg-slate-900 border-t border-slate-700 px-4 py-3 flex flex-col gap-3">
 
-      {lineId && (
-        <p className="text-xs text-slate-500">
-          ウェイポイント数: {segments.reduce((n, s) => n + s.waypoints.length, 0)}個
-          {selectedWP === null && <span className="ml-2 text-slate-600">WPをクリックして強度を調整</span>}
-        </p>
-      )}
+        {/* Tension slider */}
+        {selectedWP && selectedWpData && (
+          <div className="bg-slate-800 border border-slate-600 rounded-lg px-4 py-3">
+            <div className="flex items-center gap-4">
+              <div className="shrink-0">
+                <p className="text-xs text-slate-400 mb-0.5">曲がり強度</p>
+                <p className="text-xs text-slate-500">区間 {selectedWP.segIdx + 1} — WP {selectedWP.wpIdx + 1}</p>
+              </div>
+              <div className="flex-1 flex items-center gap-3">
+                <span className="text-xs text-slate-500 w-6">直線</span>
+                <input
+                  type="range" min="0" max="3" step="0.1"
+                  value={selectedWpData.tension ?? 1.0}
+                  onChange={e => handleTensionChange(selectedWP.segIdx, selectedWP.wpIdx, parseFloat(e.target.value))}
+                  className="flex-1 accent-cyan-400"
+                />
+                <span className="text-xs text-slate-500 w-8">強い</span>
+                <span className="text-sm font-mono text-cyan-300 w-8 text-right">
+                  {(selectedWpData.tension ?? 1.0).toFixed(1)}
+                </span>
+              </div>
+              <button
+                onClick={() => handleTensionChange(selectedWP.segIdx, selectedWP.wpIdx, 1.0)}
+                className="text-xs text-slate-400 hover:text-white shrink-0"
+              >
+                リセット
+              </button>
+            </div>
+            <div className="mt-2 flex gap-2 flex-wrap">
+              {[0, 0.5, 1.0, 1.5, 2.0, 3.0].map(v => (
+                <button
+                  key={v}
+                  onClick={() => handleTensionChange(selectedWP.segIdx, selectedWP.wpIdx, v)}
+                  className={`text-xs px-2 py-0.5 rounded transition-colors
+                    ${(selectedWpData.tension ?? 1.0) === v
+                      ? 'bg-cyan-600 text-white'
+                      : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
+                >
+                  {v === 1.0 ? '1.0 (標準)' : v.toFixed(1)}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Operation hints + WP count */}
+        <div className="flex items-center justify-between gap-4">
+          <p className="text-xs text-slate-500 leading-relaxed">
+            路線上クリック: WP追加　／　WPクリック: 選択・曲がり調整　／　ドラッグ: 移動　／　ダブルクリック: 削除
+          </p>
+          {lineId && (
+            <p className="text-xs text-slate-500 shrink-0">
+              WP: {segments.reduce((n, s) => n + s.waypoints.length, 0)}個
+            </p>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

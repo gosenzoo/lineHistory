@@ -23,7 +23,8 @@ export interface MapState {
 
 interface BaseEvent {
   id: string
-  date: string
+  date: string       // YYYY-MM-DD
+  orderIndex: number // 同日内の順番 (0始まり)
   label: string
 }
 
@@ -45,11 +46,13 @@ export interface LineExtendEvent extends BaseEvent {
   lineId: string
   stationIds: string[]
   direction: 'start' | 'end'
+  extAnimFrom?: 'junction' | 'tip'  // アニメーション開始端（junction=接続点, tip=新端駅）
 }
 
 export interface LineCloseEvent extends BaseEvent {
   type: 'line_close'
   lineId: string
+  animDirection?: 'start' | 'end'   // 消去開始端
 }
 
 export interface StationCloseEvent extends BaseEvent {
@@ -87,7 +90,16 @@ export interface LineSegmentGeometry {
 export interface LineGeometry {
   lineId: string
   segments: LineSegmentGeometry[]
-  animDirection?: 'start' | 'end'  // 路線開業アニメーションの描画開始端（省略時: 'start'）
+  animDirection?: 'start' | 'end'        // 開業アニメーション開始端
+  extAnimFrom?: 'junction' | 'tip'       // 延伸アニメーション開始端（junction=接続点, tip=新端駅）
+  closeAnimDirection?: 'start' | 'end'   // 廃線アニメーション消去開始端
+}
+
+export interface CanvasExpansion {
+  top: number
+  bottom: number
+  left: number
+  right: number
 }
 
 export interface BackgroundImage {
@@ -106,4 +118,5 @@ export interface RailwayData {
   events: RailwayEvent[]
   geometries: LineGeometry[]
   background?: BackgroundImage
+  canvas?: CanvasExpansion
 }

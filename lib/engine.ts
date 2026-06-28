@@ -1,16 +1,28 @@
 import type { Station, Line, RailwayEvent, MapState, ActiveLine } from './types'
 
+function sortEvents(events: RailwayEvent[]): RailwayEvent[] {
+  return [...events].sort((a, b) => {
+    const d = a.date.localeCompare(b.date)
+    return d !== 0 ? d : a.orderIndex - b.orderIndex
+  })
+}
+
+// upToDate: YYYY-MM-DD inclusive
+// upToOrderIndex: same-date events with orderIndex > this value are excluded (undefined = include all)
 export function computeMapState(
   _stations: Station[],
   lines: Line[],
   events: RailwayEvent[],
-  currentYear: number
+  upToDate: string,
+  upToOrderIndex?: number
 ): MapState {
   const lineMap = new Map(lines.map(l => [l.id, l]))
 
-  const filtered = events
-    .filter(e => parseInt(e.date.slice(0, 4)) <= currentYear)
-    .sort((a, b) => a.date.localeCompare(b.date))
+  const filtered = sortEvents(events.filter(e => {
+    if (e.date < upToDate) return true
+    if (e.date === upToDate) return upToOrderIndex === undefined || e.orderIndex <= upToOrderIndex
+    return false
+  }))
 
   const activeLinesMap = new Map<string, string[]>()
 
@@ -84,5 +96,5 @@ export function computeMapState(
 }
 
 export function getEventsForYear(events: RailwayEvent[], year: number): RailwayEvent[] {
-  return events.filter(e => parseInt(e.date.slice(0, 4)) === year)
+  return sortEvents(events.filter(e => e.date.slice(0, 4) === String(year)))
 }

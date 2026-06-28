@@ -18,7 +18,7 @@ const TYPE_BADGE: Record<string, { label: string; cls: string }> = {
   section_replace: { label: '区間改編',  cls: 'bg-purple-800 text-purple-200' },
 }
 
-type LeftTab    = 'events' | 'lines' | 'bg'
+type LeftTab    = 'events' | 'lines' | 'bg' | 'canvas'
 type RightPanel = 'wizard' | 'event-editor' | 'path-editor' | null
 
 export default function AdminApp() {
@@ -74,7 +74,10 @@ export default function AdminApp() {
     setRightPanel('path-editor')
   }
 
-  const sortedEvents = [...data.events].sort((a, b) => a.date.localeCompare(b.date))
+  const sortedEvents = [...data.events].sort((a, b) => {
+    const d = a.date.localeCompare(b.date)
+    return d !== 0 ? d : a.orderIndex - b.orderIndex
+  })
 
   return (
     <div className="flex flex-col h-screen bg-slate-950 text-slate-200">
@@ -89,17 +92,75 @@ export default function AdminApp() {
         <aside className="w-72 bg-slate-900 border-r border-slate-700 flex flex-col shrink-0">
           {/* Tabs */}
           <div className="flex border-b border-slate-700 shrink-0">
-            {(['events', 'lines', 'bg'] as LeftTab[]).map(tab => (
+            {(['events', 'lines', 'bg', 'canvas'] as LeftTab[]).map(tab => (
               <button
                 key={tab}
                 onClick={() => setLeftTab(tab)}
-                className={`flex-1 py-2.5 text-sm font-medium transition-colors
+                className={`flex-1 py-2.5 text-xs font-medium transition-colors
                   ${leftTab === tab ? 'text-white border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200'}`}
               >
-                {tab === 'events' ? `イベント (${data.events.length})` : tab === 'lines' ? `路線 (${data.lines.length})` : '背景'}
+                {tab === 'events' ? `イベント` : tab === 'lines' ? `路線` : tab === 'bg' ? '背景' : 'キャンバス'}
               </button>
             ))}
           </div>
+
+          {/* Canvas tab */}
+          {leftTab === 'canvas' && (() => {
+            const exp = data.canvas
+            const effW = 800 + (exp?.left ?? 0) + (exp?.right ?? 0)
+            const effH = 550 + (exp?.top ?? 0) + (exp?.bottom ?? 0)
+            const setExp = (dir: keyof NonNullable<typeof exp>, val: number) =>
+              handleDataUpdate({ ...data, canvas: { top: 0, bottom: 0, left: 0, right: 0, ...exp, [dir]: Math.max(0, val) } })
+            const dirs = [
+              { key: 'top',    label: '上方向' },
+              { key: 'bottom', label: '下方向' },
+              { key: 'left',   label: '左方向' },
+              { key: 'right',  label: '右方向' },
+            ] as const
+            return (
+              <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-5">
+                <div>
+                  <p className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-3">拡張量（SVG座標単位）</p>
+                  <div className="space-y-3">
+                    {dirs.map(({ key, label }) => (
+                      <div key={key}>
+                        <div className="flex justify-between text-xs text-slate-400 mb-1">
+                          <span>{label}</span>
+                          <span className="font-mono text-slate-300">{exp?.[key] ?? 0} px</span>
+                        </div>
+                        <div className="flex gap-2">
+                          <input
+                            type="range" min={0} max={800} step={50}
+                            value={exp?.[key] ?? 0}
+                            onChange={e => setExp(key, parseInt(e.target.value))}
+                            className="flex-1 accent-blue-400"
+                          />
+                          <input
+                            type="number" min={0} max={2000} step={50}
+                            value={exp?.[key] ?? 0}
+                            onChange={e => setExp(key, parseInt(e.target.value) || 0)}
+                            className="w-20 bg-slate-700 text-white text-sm rounded px-2 py-1 border border-slate-600 focus:border-blue-400 outline-none"
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="bg-slate-800 rounded-lg p-3 text-xs text-slate-400 space-y-1">
+                  <p>基本サイズ: 800 × 550</p>
+                  <p className="text-white font-medium">実効サイズ: {effW} × {effH}</p>
+                </div>
+                {(exp?.top || exp?.bottom || exp?.left || exp?.right) && (
+                  <button
+                    onClick={() => handleDataUpdate({ ...data, canvas: { top: 0, bottom: 0, left: 0, right: 0 } })}
+                    className="text-xs bg-slate-700 hover:bg-slate-600 rounded py-2 text-slate-300"
+                  >
+                    リセット（800 × 550）
+                  </button>
+                )}
+              </div>
+            )
+          })()}
 
           {/* Events tab */}
           {leftTab === 'events' && (
@@ -129,6 +190,7 @@ export default function AdminApp() {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-1">
                             <span className="text-slate-400 font-mono text-xs">{ev.date}</span>
+                            <span className="text-slate-600 font-mono text-xs">#{ev.orderIndex}</span>
                             <span className={`text-xs px-1.5 py-0.5 rounded ${badge.cls}`}>{badge.label}</span>
                           </div>
                           <p className="text-sm text-slate-300 leading-snug">{ev.label}</p>
@@ -311,7 +373,7 @@ export default function AdminApp() {
         </aside>
 
         {/* Right panel */}
-        <main className="flex-1 overflow-y-auto">
+        <main className={`flex-1 ${rightPanel === 'path-editor' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
           {rightPanel === 'wizard' && (
             <div className="max-w-4xl mx-auto px-6 py-6">
               <div className="flex items-center justify-between mb-5">
@@ -338,7 +400,7 @@ export default function AdminApp() {
           )}
 
           {rightPanel === 'path-editor' && (
-            <div className="max-w-2xl mx-auto px-6 py-6">
+            <div className="h-full">
               <PathEditor
                 data={data}
                 initialLineId={editingLineId}
