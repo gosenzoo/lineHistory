@@ -1,7 +1,5 @@
 'use client'
 
-import { useEffect } from 'react'
-
 interface Props {
   year: number
   minYear: number
@@ -12,18 +10,6 @@ interface Props {
 }
 
 export default function Timeline({ year, minYear, maxYear, isPlaying, onYearChange, onPlayPause }: Props) {
-  useEffect(() => {
-    if (!isPlaying) return
-    const timer = setInterval(() => {
-      const next = year + 1
-      if (next > maxYear) {
-        onPlayPause()
-        return
-      }
-      onYearChange(next)
-    }, 600)
-    return () => clearInterval(timer)
-  }, [isPlaying, year, maxYear, onYearChange, onPlayPause])
 
   return (
     <div className="flex items-center gap-4 px-6 py-3 bg-slate-900 border-t border-slate-700">

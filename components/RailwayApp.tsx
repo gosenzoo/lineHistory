@@ -8,6 +8,7 @@ import { computeMapState } from '@/lib/engine'
 import MapView from './MapView'
 import Timeline from './Timeline'
 import EventLog from './EventLog'
+import params from '@/paramSettings'
 
 export default function RailwayApp() {
   const [data, setData] = useState({ stations: defaultStations, lines: defaultLines, events: defaultEvents, geometries: [] as import('@/lib/types').LineGeometry[] })
@@ -26,17 +27,42 @@ export default function RailwayApp() {
     ? Math.max(...data.events.map(e => parseInt(e.date.slice(0, 4)))) + 5
     : 1965
 
-  // Initialize year once minYear is known
   useEffect(() => {
     setYear(prev => prev === 0 ? minYear : prev)
   }, [minYear])
+
+  // ── Play loop ────────────────────────────────────────────────────────────────
+  // Fire once per year while playing. Delay depends on whether this year has a
+  // line_open event: if so, wait for the draw animation to finish + a pause;
+  // otherwise use the shorter yearDurationMs interval.
+  useEffect(() => {
+    if (!isPlaying || year === 0) return
+
+    const hasLineOpen = data.events.some(
+      e => e.type === 'line_open' && parseInt(e.date) === year
+    )
+    const delay = hasLineOpen
+      ? params.animDurationMs + params.pauseAfterAnimMs
+      : params.yearDurationMs
+
+    const timer = setTimeout(() => {
+      if (year >= maxYear) {
+        setIsPlaying(false)
+      } else {
+        setYear(y => y + 1)
+      }
+    }, delay)
+
+    return () => clearTimeout(timer)
+  }, [isPlaying, year, maxYear, data.events])
+
+  // ── Derived state ────────────────────────────────────────────────────────────
 
   const mapState = computeMapState(data.stations, data.lines, data.events, year)
 
   const handleYearChange = useCallback((next: number) => {
     setYear(next)
-    if (next >= maxYear) setIsPlaying(false)
-  }, [maxYear])
+  }, [])
 
   const handlePlayPause = useCallback(() => {
     setIsPlaying(prev => !prev)
@@ -58,7 +84,7 @@ export default function RailwayApp() {
 
       <div className="flex flex-1 overflow-hidden">
         <main className="flex-1 overflow-hidden">
-          <MapView stations={data.stations} mapState={mapState} geometries={data.geometries} />
+          <MapView stations={data.stations} mapState={mapState} geometries={data.geometries} animated={isPlaying} />
         </main>
         <EventLog events={data.events} currentYear={year} />
       </div>
