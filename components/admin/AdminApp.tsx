@@ -2,10 +2,11 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
-import type { RailwayData } from '@/lib/types'
+import type { RailwayData, RailwayEvent } from '@/lib/types'
 import { loadData, saveData, resetData } from '@/lib/store'
 import { stations as defaultStations, lines as defaultLines, events as defaultEvents } from '@/lib/data'
 import EventWizard from './EventWizard'
+import EventEditor from './EventEditor'
 import PathEditor from './PathEditor'
 
 const TYPE_BADGE: Record<string, { label: string; cls: string }> = {
@@ -17,8 +18,8 @@ const TYPE_BADGE: Record<string, { label: string; cls: string }> = {
   section_replace: { label: '区間改編',  cls: 'bg-purple-800 text-purple-200' },
 }
 
-type LeftTab = 'events' | 'lines'
-type RightPanel = 'wizard' | 'path-editor' | null
+type LeftTab    = 'events' | 'lines'
+type RightPanel = 'wizard' | 'event-editor' | 'path-editor' | null
 
 export default function AdminApp() {
   const [data, setData] = useState<RailwayData>({
@@ -27,14 +28,13 @@ export default function AdminApp() {
     events: defaultEvents,
     geometries: [],
   })
-  const [leftTab, setLeftTab] = useState<LeftTab>('events')
-  const [rightPanel, setRightPanel] = useState<RightPanel>(null)
+  const [leftTab,       setLeftTab]       = useState<LeftTab>('events')
+  const [rightPanel,    setRightPanel]    = useState<RightPanel>(null)
   const [editingLineId, setEditingLineId] = useState('')
+  const [editingEvent,  setEditingEvent]  = useState<RailwayEvent | null>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  useEffect(() => {
-    setData(loadData())
-  }, [])
+  useEffect(() => { setData(loadData()) }, [])
 
   const handleDataUpdate = useCallback((newData: RailwayData) => {
     setData(newData)
@@ -48,12 +48,25 @@ export default function AdminApp() {
     setRightPanel(null)
   }, [])
 
+  const handleEditorSave = useCallback((newData: RailwayData) => {
+    saveData(newData)
+    setData(newData)
+    setRightPanel(null)
+    setEditingEvent(null)
+  }, [])
+
+  function openEventEditor(ev: RailwayEvent) {
+    setEditingEvent(ev)
+    setRightPanel('event-editor')
+  }
+
   function handleReset() {
     if (!confirm('サンプルデータにリセットしますか？')) return
     resetData()
     const d = { stations: defaultStations, lines: defaultLines, events: defaultEvents, geometries: [] }
     setData(d)
     setRightPanel(null)
+    setEditingEvent(null)
   }
 
   function openPathEditor(lineId: string) {
@@ -94,7 +107,7 @@ export default function AdminApp() {
               <div className="flex items-center justify-between px-4 py-2 border-b border-slate-700 shrink-0">
                 <span className="text-xs text-slate-400">時系列順</span>
                 <button
-                  onClick={() => setRightPanel('wizard')}
+                  onClick={() => { setRightPanel('wizard'); setEditingEvent(null) }}
                   className="text-xs bg-blue-600 hover:bg-blue-500 px-3 py-1 rounded-lg"
                 >
                   + 追加
@@ -105,9 +118,14 @@ export default function AdminApp() {
                   <p className="text-slate-500 text-sm p-4">イベントがありません</p>
                 ) : (
                   sortedEvents.map(ev => {
-                    const badge = TYPE_BADGE[ev.type]
+                    const badge     = TYPE_BADGE[ev.type]
+                    const isEditing = rightPanel === 'event-editor' && editingEvent?.id === ev.id
                     return (
-                      <div key={ev.id} className="group px-4 py-3 hover:bg-slate-800/50 flex gap-2">
+                      <div
+                        key={ev.id}
+                        className={`group px-4 py-3 flex gap-2 transition-colors
+                          ${isEditing ? 'bg-slate-700/60' : 'hover:bg-slate-800/50'}`}
+                      >
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-1">
                             <span className="text-slate-400 font-mono text-xs">{ev.date}</span>
@@ -115,17 +133,28 @@ export default function AdminApp() {
                           </div>
                           <p className="text-sm text-slate-300 leading-snug">{ev.label}</p>
                         </div>
-                        <button
-                          onClick={() => {
-                            if (!confirm(`「${ev.label}」を削除しますか？`)) return
-                            const newData = { ...data, events: data.events.filter(e => e.id !== ev.id) }
-                            handleDataUpdate(newData)
-                          }}
-                          className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 transition-opacity text-sm px-1 shrink-0 self-start pt-0.5"
-                          title="削除"
-                        >
-                          ✕
-                        </button>
+                        {/* Action buttons (visible on hover) */}
+                        <div className="opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-1 shrink-0 pt-0.5">
+                          <button
+                            onClick={() => openEventEditor(ev)}
+                            className="text-slate-400 hover:text-blue-300 text-xs px-1"
+                            title="編集"
+                          >
+                            ✎
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (!confirm(`「${ev.label}」を削除しますか？`)) return
+                              const newData = { ...data, events: data.events.filter(e => e.id !== ev.id) }
+                              if (editingEvent?.id === ev.id) { setEditingEvent(null); setRightPanel(null) }
+                              handleDataUpdate(newData)
+                            }}
+                            className="text-slate-500 hover:text-red-400 text-xs px-1"
+                            title="削除"
+                          >
+                            ✕
+                          </button>
+                        </div>
                       </div>
                     )
                   })
@@ -183,6 +212,21 @@ export default function AdminApp() {
             </div>
           )}
 
+          {rightPanel === 'event-editor' && editingEvent && (
+            <div className="max-w-lg mx-auto px-6 py-6">
+              <div className="flex items-center justify-between mb-5">
+                <h2 className="font-bold text-base">イベント編集</h2>
+                <button onClick={() => { setRightPanel(null); setEditingEvent(null) }} className="text-slate-400 hover:text-white text-sm">✕</button>
+              </div>
+              <EventEditor
+                event={editingEvent}
+                data={data}
+                onSave={handleEditorSave}
+                onCancel={() => { setRightPanel(null); setEditingEvent(null) }}
+              />
+            </div>
+          )}
+
           {rightPanel === 'path-editor' && (
             <div className="max-w-2xl mx-auto px-6 py-6">
               <PathEditor
@@ -205,7 +249,7 @@ export default function AdminApp() {
                   + イベントを追加
                 </button>
                 <button
-                  onClick={() => { setLeftTab('lines'); }}
+                  onClick={() => setLeftTab('lines')}
                   className="text-sm bg-slate-700 hover:bg-slate-600 text-slate-300 px-4 py-2 rounded-lg"
                 >
                   パスを編集

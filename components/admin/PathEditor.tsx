@@ -174,25 +174,31 @@ export default function PathEditor({ data, initialLineId = '', onUpdate, onClose
         </select>
       </div>
 
-      {lineId && (
-        <div>
-          <label className="text-xs text-slate-400 block mb-1.5">アニメーション開始端</label>
-          <div className="flex gap-2">
-            {(['start', 'end'] as const).map(dir => (
-              <button
-                key={dir}
-                onClick={() => saveGeo({ animDirection: dir })}
-                className={`flex-1 text-sm py-1.5 rounded transition-colors
-                  ${(currentGeo?.animDirection ?? 'start') === dir
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
-              >
-                {dir === 'start' ? '始点から' : '終点から'}
-              </button>
-            ))}
+      {lineId && (() => {
+        const ids          = selectedActiveLine?.stationIds ?? []
+        const startStName  = stationMap.get(ids[0])?.name ?? '始点'
+        const endStName    = stationMap.get(ids[ids.length - 1])?.name ?? '終点'
+        const currentDir   = currentGeo?.animDirection ?? 'start'
+        return (
+          <div>
+            <label className="text-xs text-slate-400 block mb-1.5">アニメーション開始端</label>
+            <div className="flex gap-2">
+              {(['start', 'end'] as const).map(dir => (
+                <button
+                  key={dir}
+                  onClick={() => saveGeo({ animDirection: dir })}
+                  className={`flex-1 text-sm py-1.5 rounded transition-colors
+                    ${currentDir === dir
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
+                >
+                  {dir === 'start' ? startStName : endStName}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
 
       <div className="relative rounded-lg overflow-hidden border border-slate-600">
         <svg
