@@ -123,7 +123,7 @@ export default function AdminApp() {
                     return (
                       <div
                         key={ev.id}
-                        className={`group px-4 py-3 flex gap-2 transition-colors
+                        className={`px-4 py-3 flex gap-2 transition-colors
                           ${isEditing ? 'bg-slate-700/60' : 'hover:bg-slate-800/50'}`}
                       >
                         <div className="flex-1 min-w-0">
@@ -133,14 +133,13 @@ export default function AdminApp() {
                           </div>
                           <p className="text-sm text-slate-300 leading-snug">{ev.label}</p>
                         </div>
-                        {/* Action buttons (visible on hover) */}
-                        <div className="opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-1 shrink-0 pt-0.5">
+                        {/* Action buttons */}
+                        <div className="flex flex-col gap-1 shrink-0 pt-0.5">
                           <button
                             onClick={() => openEventEditor(ev)}
-                            className="text-slate-400 hover:text-blue-300 text-xs px-1"
-                            title="編集"
+                            className="text-xs px-2 py-0.5 rounded bg-slate-700 hover:bg-slate-600 text-slate-300"
                           >
-                            ✎
+                            編集
                           </button>
                           <button
                             onClick={() => {
@@ -149,10 +148,9 @@ export default function AdminApp() {
                               if (editingEvent?.id === ev.id) { setEditingEvent(null); setRightPanel(null) }
                               handleDataUpdate(newData)
                             }}
-                            className="text-slate-500 hover:text-red-400 text-xs px-1"
-                            title="削除"
+                            className="text-xs px-2 py-0.5 rounded bg-red-900/60 hover:bg-red-800 text-red-300"
                           >
-                            ✕
+                            削除
                           </button>
                         </div>
                       </div>
