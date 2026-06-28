@@ -131,6 +131,7 @@ export default function MapView({ stations, mapState, geometries, background, ca
     function frame() {
       const now = performance.now()
       let anyActive = false
+      const cameraTips: { x: number; y: number }[] = []
 
       for (const [elemId, anim] of lineAnimRef.current) {
         const elapsed  = now - anim.startTime
@@ -205,6 +206,27 @@ export default function MapView({ stations, mapState, geometries, background, ca
           }
         }
 
+        // ── Camera: collect drawing tip ───────────────────────────────────────
+        if (pathEl) {
+          let tipDist: number
+          if (anim.kind === 'open') {
+            tipDist = anim.totalLength * progress
+          } else if (anim.kind === 'extend') {
+            const extensionLen = anim.totalLength - anim.existingLen
+            const drawn = extensionLen * progress
+            tipDist = anim.extAnimFrom === 'tip'
+              ? anim.totalLength - drawn
+              : anim.existingLen + drawn
+          } else {
+            // close: erase front moves from 0 toward totalLength
+            tipDist = anim.totalLength * (1 - progress)
+          }
+          try {
+            const pt = pathEl.getPointAtLength(Math.max(0, Math.min(tipDist, anim.totalLength)))
+            cameraTips.push({ x: pt.x, y: pt.y })
+          } catch { /* ignore */ }
+        }
+
         // ── Completion ────────────────────────────────────────────────────────
         if (elapsed >= TOTAL_MS) {
           if (pathEl) {
@@ -230,6 +252,32 @@ export default function MapView({ stations, mapState, geometries, background, ca
         }
       }
 
+      // ── Camera update ──────────────────────────────────────────────────────
+      if (cameraGroupRef.current) {
+        if (cameraTips.length > 0) {
+          // Lerp toward average tip position (frame-rate–independent, speed=3)
+          const avgX = cameraTips.reduce((s, p) => s + p.x, 0) / cameraTips.length
+          const avgY = cameraTips.reduce((s, p) => s + p.y, 0) / cameraTips.length
+          const { vbX, vbY, vbW, vbH } = vbParamsRef.current
+          const targetDx = (vbX + vbW / 2) - avgX
+          const targetDy = (vbY + vbH / 2) - avgY
+          const lerpFactor = 0.05
+          cameraXRef.current += (targetDx - cameraXRef.current) * lerpFactor
+          cameraYRef.current += (targetDy - cameraYRef.current) * lerpFactor
+          cameraGroupRef.current.style.transition = 'none'
+          cameraGroupRef.current.setAttribute('transform',
+            `translate(${cameraXRef.current.toFixed(1)},${cameraYRef.current.toFixed(1)})`)
+        }
+
+        if (!anyActive && (Math.abs(cameraXRef.current) > 0.5 || Math.abs(cameraYRef.current) > 0.5)) {
+          // All animations done → return camera to center smoothly
+          cameraGroupRef.current.style.transition = 'transform 0.9s ease-out'
+          cameraGroupRef.current.setAttribute('transform', 'translate(0,0)')
+          cameraXRef.current = 0
+          cameraYRef.current = 0
+        }
+      }
+
       rafRef.current = anyActive ? requestAnimationFrame(frame) : null
     }
 
@@ -248,6 +296,13 @@ export default function MapView({ stations, mapState, geometries, background, ca
 
     if (!animated) {
       stopRaf()
+      // Reset camera immediately (no transition when user pauses)
+      if (cameraGroupRef.current) {
+        cameraGroupRef.current.style.transition = 'none'
+        cameraGroupRef.current.setAttribute('transform', 'translate(0,0)')
+      }
+      cameraXRef.current = 0
+      cameraYRef.current = 0
       for (const [elemId, anim] of lineAnimRef.current) {
         const p = anim.kind === 'close'
           ? closingPathRefs.current.get(elemId)
@@ -521,56 +576,64 @@ export default function MapView({ stations, mapState, geometries, background, ca
 
   // ── Render ────────────────────────────────────────────────────────────────
 
+  const vbX = -(canvas?.left ?? 0)
+  const vbY = -(canvas?.top ?? 0)
+  const vbW = 800 + (canvas?.left ?? 0) + (canvas?.right ?? 0)
+  const vbH = 550 + (canvas?.top ?? 0) + (canvas?.bottom ?? 0)
+  vbParamsRef.current = { vbX, vbY, vbW, vbH }
+
   return (
     <svg
-      viewBox={`${-(canvas?.left ?? 0)} ${-(canvas?.top ?? 0)} ${800 + (canvas?.left ?? 0) + (canvas?.right ?? 0)} ${550 + (canvas?.top ?? 0) + (canvas?.bottom ?? 0)}`}
+      viewBox={`${vbX} ${vbY} ${vbW} ${vbH}`}
       className="w-full h-full"
       style={{ background: '#0f172a' }}
     >
+      {/* Camera-tracked content */}
+      <g ref={cameraGroupRef}>
+        {background && (
+          <image href={background.dataUrl}
+            x={background.offsetX} y={background.offsetY}
+            width={background.naturalWidth * background.scale}
+            height={background.naturalHeight * background.scale}
+            opacity={background.opacity} preserveAspectRatio="none" />
+        )}
 
-      {background && (
-        <image href={background.dataUrl}
-          x={background.offsetX} y={background.offsetY}
-          width={background.naturalWidth * background.scale}
-          height={background.naturalHeight * background.scale}
-          opacity={background.opacity} preserveAspectRatio="none" />
-      )}
+        {/* Active lines */}
+        {mapState.activeLines.map(({ line, stationIds }) => {
+          const geo = geometries.find(g => g.lineId === line.id)
+          const pts = buildLinePoints(stationIds, stationMap, geo)
+          return (
+            <path key={line.id}
+              ref={el => { el ? pathRefs.current.set(line.id, el) : pathRefs.current.delete(line.id) }}
+              d={catmullRomPath(pts)} fill="none"
+              stroke={line.color} strokeWidth={5}
+              strokeLinecap="round" strokeLinejoin="round" />
+          )
+        })}
 
-      {/* Active lines */}
-      {mapState.activeLines.map(({ line, stationIds }) => {
-        const geo = geometries.find(g => g.lineId === line.id)
-        const pts = buildLinePoints(stationIds, stationMap, geo)
-        return (
-          <path key={line.id}
-            ref={el => { el ? pathRefs.current.set(line.id, el) : pathRefs.current.delete(line.id) }}
-            d={catmullRomPath(pts)} fill="none"
-            stroke={line.color} strokeWidth={5}
+        {/* Closing line ghosts */}
+        {closingLines.map(cl => (
+          <path key={cl.animId}
+            ref={el => { el ? closingPathRefs.current.set(cl.animId, el) : closingPathRefs.current.delete(cl.animId) }}
+            d={cl.pathD} fill="none"
+            stroke={cl.color} strokeWidth={5}
             strokeLinecap="round" strokeLinejoin="round" />
-        )
-      })}
+        ))}
 
-      {/* Closing line ghosts */}
-      {closingLines.map(cl => (
-        <path key={cl.animId}
-          ref={el => { el ? closingPathRefs.current.set(cl.animId, el) : closingPathRefs.current.delete(cl.animId) }}
-          d={cl.pathD} fill="none"
-          stroke={cl.color} strokeWidth={5}
-          strokeLinecap="round" strokeLinejoin="round" />
-      ))}
+        {/* Stations */}
+        {stations.filter(s => mapState.activeStationIds.has(s.id)).map(station => (
+          <g key={station.id}
+            ref={el => { el ? stationRefs.current.set(station.id, el) : stationRefs.current.delete(station.id) }}>
+            <circle cx={station.x} cy={station.y} r={8} fill="white" stroke="#334155" strokeWidth={2} />
+            <text x={station.x} y={station.y - 14} textAnchor="middle" fontSize={13} fill="white" fontFamily="sans-serif">
+              {station.name}
+            </text>
+          </g>
+        ))}
+      </g>
 
-      {/* Stations */}
-      {stations.filter(s => mapState.activeStationIds.has(s.id)).map(station => (
-        <g key={station.id}
-          ref={el => { el ? stationRefs.current.set(station.id, el) : stationRefs.current.delete(station.id) }}>
-          <circle cx={station.x} cy={station.y} r={8} fill="white" stroke="#334155" strokeWidth={2} />
-          <text x={station.x} y={station.y - 14} textAnchor="middle" fontSize={13} fill="white" fontFamily="sans-serif">
-            {station.name}
-          </text>
-        </g>
-      ))}
-
-      {/* Legend */}
-      <g transform="translate(20, 460)">
+      {/* Legend — fixed to viewport (not camera-tracked) */}
+      <g transform={`translate(${vbX + 20}, ${vbY + vbH - 90})`}>
         <rect x={0} y={0} width={160} height={mapState.activeLines.length * 24 + 12} rx={6} fill="#1e293b" opacity={0.9} />
         {mapState.activeLines.map(({ line }, i) => (
           <g key={line.id} transform={`translate(10, ${i * 24 + 16})`}>
