@@ -1,7 +1,7 @@
 'use client'
 
 import { useLayoutEffect, useRef } from 'react'
-import type { MapState, Station, LineGeometry } from '@/lib/types'
+import type { MapState, Station, LineGeometry, BackgroundImage } from '@/lib/types'
 import { buildLinePoints, catmullRomPath } from '@/lib/geometry'
 import params from '@/paramSettings'
 
@@ -75,10 +75,11 @@ interface Props {
   stations: Station[]
   mapState: MapState
   geometries: LineGeometry[]
+  background?: BackgroundImage
   animated?: boolean
 }
 
-export default function MapView({ stations, mapState, geometries, animated = false }: Props) {
+export default function MapView({ stations, mapState, geometries, background, animated = false }: Props) {
   const stationMap = new Map(stations.map(s => [s.id, s]))
 
   const pathRefs    = useRef<Map<string, SVGPathElement>>(new Map())
@@ -278,6 +279,19 @@ export default function MapView({ stations, mapState, geometries, animated = fal
       className="w-full h-full"
       style={{ background: '#0f172a' }}
     >
+      {/* Background image */}
+      {background && (
+        <image
+          href={background.dataUrl}
+          x={background.offsetX}
+          y={background.offsetY}
+          width={background.naturalWidth * background.scale}
+          height={background.naturalHeight * background.scale}
+          opacity={background.opacity}
+          preserveAspectRatio="none"
+        />
+      )}
+
       {/* Lines */}
       {mapState.activeLines.map(({ line, stationIds }) => {
         const geo = geometries.find(g => g.lineId === line.id)

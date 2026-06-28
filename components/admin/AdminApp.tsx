@@ -18,7 +18,7 @@ const TYPE_BADGE: Record<string, { label: string; cls: string }> = {
   section_replace: { label: '区間改編',  cls: 'bg-purple-800 text-purple-200' },
 }
 
-type LeftTab    = 'events' | 'lines'
+type LeftTab    = 'events' | 'lines' | 'bg'
 type RightPanel = 'wizard' | 'event-editor' | 'path-editor' | null
 
 export default function AdminApp() {
@@ -89,14 +89,14 @@ export default function AdminApp() {
         <aside className="w-72 bg-slate-900 border-r border-slate-700 flex flex-col shrink-0">
           {/* Tabs */}
           <div className="flex border-b border-slate-700 shrink-0">
-            {(['events', 'lines'] as LeftTab[]).map(tab => (
+            {(['events', 'lines', 'bg'] as LeftTab[]).map(tab => (
               <button
                 key={tab}
                 onClick={() => setLeftTab(tab)}
                 className={`flex-1 py-2.5 text-sm font-medium transition-colors
                   ${leftTab === tab ? 'text-white border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200'}`}
               >
-                {tab === 'events' ? `イベント (${data.events.length})` : `路線 (${data.lines.length})`}
+                {tab === 'events' ? `イベント (${data.events.length})` : tab === 'lines' ? `路線 (${data.lines.length})` : '背景'}
               </button>
             ))}
           </div>
@@ -191,6 +191,118 @@ export default function AdminApp() {
                     </div>
                   )
                 })
+              )}
+            </div>
+          )}
+
+          {/* Background tab */}
+          {leftTab === 'bg' && (
+            <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+              {!data.background ? (
+                <label className="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-slate-600 rounded-lg py-8 cursor-pointer hover:border-slate-400 transition-colors">
+                  <span className="text-slate-400 text-sm">画像を選択</span>
+                  <span className="text-slate-600 text-xs">PNG / JPG など</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={e => {
+                      const file = e.target.files?.[0]
+                      if (!file) return
+                      const reader = new FileReader()
+                      reader.onload = ev => {
+                        const dataUrl = ev.target?.result as string
+                        const img = new window.Image()
+                        img.onload = () => {
+                          const scale = Math.min(800 / img.naturalWidth, 550 / img.naturalHeight)
+                          const w = img.naturalWidth * scale
+                          const h = img.naturalHeight * scale
+                          handleDataUpdate({
+                            ...data,
+                            background: {
+                              dataUrl,
+                              naturalWidth: img.naturalWidth,
+                              naturalHeight: img.naturalHeight,
+                              scale,
+                              offsetX: Math.round((800 - w) / 2),
+                              offsetY: Math.round((550 - h) / 2),
+                              opacity: 0.5,
+                            },
+                          })
+                        }
+                        img.src = dataUrl
+                      }
+                      reader.readAsDataURL(file)
+                      e.target.value = ''
+                    }}
+                  />
+                </label>
+              ) : (
+                <>
+                  {/* Preview */}
+                  <img
+                    src={data.background.dataUrl}
+                    alt="背景プレビュー"
+                    className="w-full rounded border border-slate-600 object-contain max-h-32"
+                  />
+
+                  {/* Scale */}
+                  <div>
+                    <div className="flex justify-between text-xs text-slate-400 mb-1">
+                      <span>スケール</span>
+                      <span className="font-mono text-slate-300">{data.background.scale.toFixed(2)}x</span>
+                    </div>
+                    <input
+                      type="range" min="0.05" max="5" step="0.01"
+                      value={data.background.scale}
+                      onChange={e => handleDataUpdate({ ...data, background: { ...data.background!, scale: parseFloat(e.target.value) } })}
+                      className="w-full accent-blue-400"
+                    />
+                  </div>
+
+                  {/* Opacity */}
+                  <div>
+                    <div className="flex justify-between text-xs text-slate-400 mb-1">
+                      <span>不透明度</span>
+                      <span className="font-mono text-slate-300">{Math.round(data.background.opacity * 100)}%</span>
+                    </div>
+                    <input
+                      type="range" min="0.05" max="1" step="0.01"
+                      value={data.background.opacity}
+                      onChange={e => handleDataUpdate({ ...data, background: { ...data.background!, opacity: parseFloat(e.target.value) } })}
+                      className="w-full accent-blue-400"
+                    />
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        const bg = data.background!
+                        const w = bg.naturalWidth * bg.scale
+                        const h = bg.naturalHeight * bg.scale
+                        handleDataUpdate({ ...data, background: {
+                          ...bg,
+                          offsetX: Math.round((800 - w) / 2),
+                          offsetY: Math.round((550 - h) / 2),
+                        }})
+                      }}
+                      className="flex-1 text-xs bg-slate-700 hover:bg-slate-600 rounded py-1.5"
+                    >
+                      中央に配置
+                    </button>
+                    <button
+                      onClick={() => handleDataUpdate({ ...data, background: undefined })}
+                      className="flex-1 text-xs bg-red-900/60 hover:bg-red-800 text-red-300 rounded py-1.5"
+                    >
+                      削除
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    位置はパス編集画面で背景をドラッグして調整できます
+                  </p>
+                </>
               )}
             </div>
           )}

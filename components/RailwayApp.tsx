@@ -5,13 +5,14 @@ import Link from 'next/link'
 import { stations as defaultStations, lines as defaultLines, events as defaultEvents } from '@/lib/data'
 import { loadData } from '@/lib/store'
 import { computeMapState } from '@/lib/engine'
+import type { RailwayData } from '@/lib/types'
 import MapView from './MapView'
 import Timeline from './Timeline'
 import EventLog from './EventLog'
 import params from '@/paramSettings'
 
 export default function RailwayApp() {
-  const [data, setData] = useState({ stations: defaultStations, lines: defaultLines, events: defaultEvents, geometries: [] as import('@/lib/types').LineGeometry[] })
+  const [data, setData] = useState<RailwayData>({ stations: defaultStations, lines: defaultLines, events: defaultEvents, geometries: [] })
   const [year, setYear] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
 
@@ -84,7 +85,7 @@ export default function RailwayApp() {
 
       <div className="flex flex-1 overflow-hidden">
         <main className="flex-1 overflow-hidden">
-          <MapView stations={data.stations} mapState={mapState} geometries={data.geometries} animated={isPlaying} />
+          <MapView stations={data.stations} mapState={mapState} geometries={data.geometries} background={data.background} animated={isPlaying} />
         </main>
         <EventLog events={data.events} currentYear={year} />
       </div>

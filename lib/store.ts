@@ -23,6 +23,7 @@ export function loadData(): RailwayData {
         lines:      parsed.lines      ?? defaultData().lines,
         events:     parsed.events     ?? defaultData().events,
         geometries: parsed.geometries ?? [],
+        background: parsed.background,
       }
     }
   } catch {}

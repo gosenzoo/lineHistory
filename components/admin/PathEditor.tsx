@@ -13,6 +13,11 @@ interface DragState {
   waypointIdx: number
 }
 
+interface BgDrag {
+  startMouse: { x: number; y: number }
+  startOffset: { x: number; y: number }
+}
+
 interface SelectedWP {
   segIdx: number
   wpIdx: number
@@ -28,6 +33,7 @@ interface Props {
 export default function PathEditor({ data, initialLineId = '', onUpdate, onClose }: Props) {
   const [lineId, setLineId] = useState(initialLineId)
   const [dragState, setDragState] = useState<DragState | null>(null)
+  const [bgDrag, setBgDrag] = useState<BgDrag | null>(null)
   const [selectedWP, setSelectedWP] = useState<SelectedWP | null>(null)
   const svgRef = useRef<SVGSVGElement>(null)
   const dragMovedRef = useRef(false)
@@ -95,6 +101,17 @@ export default function PathEditor({ data, initialLineId = '', onUpdate, onClose
   }
 
   function handleSVGMouseMove(e: React.MouseEvent<SVGSVGElement>) {
+    if (bgDrag && data.background) {
+      const mouse = toSVGCoords(e)
+      const dx = mouse.x - bgDrag.startMouse.x
+      const dy = mouse.y - bgDrag.startMouse.y
+      onUpdate({ ...data, background: {
+        ...data.background,
+        offsetX: bgDrag.startOffset.x + dx,
+        offsetY: bgDrag.startOffset.y + dy,
+      }})
+      return
+    }
     if (!dragState) return
     dragMovedRef.current = true
     const coords = toSVGCoords(e)
@@ -108,6 +125,7 @@ export default function PathEditor({ data, initialLineId = '', onUpdate, onClose
   }
 
   function handleSVGMouseUp() {
+    if (bgDrag) { setBgDrag(null); return }
     if (dragState && !dragMovedRef.current) {
       // click without drag → toggle selection
       const { segmentIdx, waypointIdx } = dragState
@@ -215,6 +233,27 @@ export default function PathEditor({ data, initialLineId = '', onUpdate, onClose
           onMouseUp={handleSVGMouseUp}
           onMouseLeave={handleSVGMouseUp}
         >
+          {/* Background image */}
+          {data.background && (
+            <image
+              href={data.background.dataUrl}
+              x={data.background.offsetX}
+              y={data.background.offsetY}
+              width={data.background.naturalWidth * data.background.scale}
+              height={data.background.naturalHeight * data.background.scale}
+              opacity={data.background.opacity}
+              preserveAspectRatio="none"
+              style={{ cursor: bgDrag ? 'grabbing' : 'grab' }}
+              onMouseDown={e => {
+                e.stopPropagation()
+                setBgDrag({
+                  startMouse: toSVGCoords(e),
+                  startOffset: { x: data.background!.offsetX, y: data.background!.offsetY },
+                })
+              }}
+            />
+          )}
+
           {/* Background: other lines dimmed */}
           {mapState.activeLines.map(({ line, stationIds }) => {
             if (line.id === lineId) return null

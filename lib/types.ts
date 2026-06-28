@@ -90,9 +90,20 @@ export interface LineGeometry {
   animDirection?: 'start' | 'end'  // 路線開業アニメーションの描画開始端（省略時: 'start'）
 }
 
+export interface BackgroundImage {
+  dataUrl: string
+  naturalWidth: number
+  naturalHeight: number
+  scale: number    // natural 寸法に掛けるスケール倍率
+  offsetX: number  // SVG 座標系での左上 X
+  offsetY: number  // SVG 座標系での左上 Y
+  opacity: number  // 0–1
+}
+
 export interface RailwayData {
   stations: Station[]
   lines: Line[]
   events: RailwayEvent[]
   geometries: LineGeometry[]
+  background?: BackgroundImage
 }
