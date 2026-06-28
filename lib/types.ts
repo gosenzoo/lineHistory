@@ -87,6 +87,7 @@ export interface LineSegmentGeometry {
 export interface LineGeometry {
   lineId: string
   segments: LineSegmentGeometry[]
+  animDirection?: 'start' | 'end'  // 路線開業アニメーションの描画開始端（省略時: 'start'）
 }
 
 export interface RailwayData {

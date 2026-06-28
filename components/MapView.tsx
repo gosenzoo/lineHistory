@@ -46,6 +46,7 @@ function findDistOnPath(path: SVGPathElement, x: number, y: number): number {
 interface LineAnim {
   startTime: number
   totalLength: number
+  animDirection: 'start' | 'end'
   newStationIds: Set<string>           // stations to hide until line reaches them
   stationDistances: Map<string, number> // stationId → arc distance from path start
 }
@@ -88,12 +89,25 @@ export default function MapView({ stations, mapState, geometries, animated = fal
 
         const pathEl = pathRefs.current.get(lineId)
         if (pathEl) {
-          pathEl.style.strokeDashoffset = String(anim.totalLength - drawn)
+          if (anim.animDirection === 'end') {
+            // Draw from the end: grow a dash at the tail while the leading gap shrinks
+            const gap = anim.totalLength - drawn
+            pathEl.style.strokeDasharray  = `0 ${gap} ${drawn}`
+            pathEl.style.strokeDashoffset = '0'
+          } else {
+            // Draw from the start: standard dashoffset trick
+            pathEl.style.strokeDashoffset = String(anim.totalLength - drawn)
+          }
         }
 
-        // Reveal stations as the line reaches them
+        // Reveal stations as the line reaches them.
+        // For 'end' direction, a station at arc-distance d from start is reached
+        // when the drawn tail has grown past (totalLength - d) from the end.
         for (const [sid, dist] of anim.stationDistances) {
-          if (anim.newStationIds.has(sid) && drawn >= dist) {
+          const threshold = anim.animDirection === 'end'
+            ? anim.totalLength - dist
+            : dist
+          if (anim.newStationIds.has(sid) && drawn >= threshold) {
             const el = stationRefs.current.get(sid)
             if (el) el.style.visibility = 'visible'
           }
@@ -160,11 +174,18 @@ export default function MapView({ stations, mapState, geometries, animated = fal
       const pathEl = pathRefs.current.get(lineId)
       if (!pathEl) continue
 
-      const totalLength = pathEl.getTotalLength()
+      const totalLength    = pathEl.getTotalLength()
+      const geo            = geometries.find(g => g.lineId === lineId)
+      const animDirection  = geo?.animDirection ?? 'start'
 
       // Hide path before first paint
-      pathEl.style.strokeDasharray  = String(totalLength)
-      pathEl.style.strokeDashoffset = String(totalLength)
+      if (animDirection === 'end') {
+        pathEl.style.strokeDasharray  = `0 ${totalLength} 0`
+        pathEl.style.strokeDashoffset = '0'
+      } else {
+        pathEl.style.strokeDasharray  = String(totalLength)
+        pathEl.style.strokeDashoffset = String(totalLength)
+      }
 
       // Measure arc distance for each station on this line
       const activeLine       = mapState.activeLines.find(al => al.line.id === lineId)!
@@ -184,6 +205,7 @@ export default function MapView({ stations, mapState, geometries, animated = fal
       lineAnimRef.current.set(lineId, {
         startTime: performance.now(),
         totalLength,
+        animDirection,
         newStationIds: lineNewStations,
         stationDistances,
       })

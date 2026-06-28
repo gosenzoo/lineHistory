@@ -52,12 +52,16 @@ export default function PathEditor({ data, initialLineId = '', onUpdate, onClose
     })
   }
 
-  function saveSegments(segments: LineSegmentGeometry[]) {
+  function saveGeo(partial: Partial<Omit<LineGeometry, 'lineId'>>) {
     const newGeos: LineGeometry[] = [
       ...data.geometries.filter(g => g.lineId !== lineId),
-      { lineId, segments },
+      { ...currentGeo, lineId, segments: currentGeo?.segments ?? [], ...partial },
     ]
     onUpdate({ ...data, geometries: newGeos })
+  }
+
+  function saveSegments(segments: LineSegmentGeometry[]) {
+    saveGeo({ segments })
   }
 
   function toSVGCoords(e: React.MouseEvent): { x: number; y: number } {
@@ -169,6 +173,26 @@ export default function PathEditor({ data, initialLineId = '', onUpdate, onClose
           ))}
         </select>
       </div>
+
+      {lineId && (
+        <div>
+          <label className="text-xs text-slate-400 block mb-1.5">アニメーション開始端</label>
+          <div className="flex gap-2">
+            {(['start', 'end'] as const).map(dir => (
+              <button
+                key={dir}
+                onClick={() => saveGeo({ animDirection: dir })}
+                className={`flex-1 text-sm py-1.5 rounded transition-colors
+                  ${(currentGeo?.animDirection ?? 'start') === dir
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
+              >
+                {dir === 'start' ? '始点から' : '終点から'}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="relative rounded-lg overflow-hidden border border-slate-600">
         <svg
