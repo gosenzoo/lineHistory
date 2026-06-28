@@ -7,17 +7,21 @@ import params from '@/paramSettings'
 
 // ── animation helpers ─────────────────────────────────────────────────────────
 
-const ANIM_MS = params.animDurationMs
+const ANIM_MS           = params.animDurationMs
+const STATION_APPEAR_MS = params.stationAppearMs
+const STATION_ARRIVE_MS = params.stationArriveMs
 
 function easeOut(t: number): number {
   return 1 - (1 - t) ** 3
 }
 
+function easeInOut(t: number): number {
+  return t < 0.5 ? 4 * t ** 3 : 1 - (-2 * t + 2) ** 3 / 2
+}
+
 // Find the arc-length along `path` closest to (x, y).
-// Catmull-Rom passes exactly through station coords, so the minimum distance → 0.
 function findDistOnPath(path: SVGPathElement, x: number, y: number): number {
   const total = path.getTotalLength()
-  // Coarse scan
   const N = 300
   let best = 0
   let bestSq = Infinity
@@ -27,7 +31,6 @@ function findDistOnPath(path: SVGPathElement, x: number, y: number): number {
     const sq = (p.x - x) ** 2 + (p.y - y) ** 2
     if (sq < bestSq) { bestSq = sq; best = d }
   }
-  // Ternary-search refinement in the winning neighbourhood
   let lo = Math.max(0, best - total / N)
   let hi = Math.min(total, best + total / N)
   for (let i = 0; i < 24; i++) {
@@ -41,14 +44,29 @@ function findDistOnPath(path: SVGPathElement, x: number, y: number): number {
   return (lo + hi) / 2
 }
 
+// Scale a station <g> around its center point using SVG transform.
+function stationScaleTransform(x: number, y: number, scale: number): string {
+  if (scale >= 1) return ''
+  return `translate(${x},${y}) scale(${scale}) translate(${-x},${-y})`
+}
+
 // ── types ─────────────────────────────────────────────────────────────────────
+
+interface StationPos { x: number; y: number }
 
 interface LineAnim {
   startTime: number
   totalLength: number
   animDirection: 'start' | 'end'
-  newStationIds: Set<string>           // stations to hide until line reaches them
-  stationDistances: Map<string, number> // stationId → arc distance from path start
+  forwardPathD: string
+  // Phase A: start station
+  startStationId: string
+  phaseAMs: number                         // 0 if start station is not new
+  // Phase B: intermediate / end stations
+  stationPositions: Map<string, StationPos>
+  newStationIds: Set<string>
+  stationDistances: Map<string, number>
+  stationAppearTimes: Map<string, number>  // filled during RAF as line reaches each station
 }
 
 // ── component ─────────────────────────────────────────────────────────────────
@@ -57,17 +75,15 @@ interface Props {
   stations: Station[]
   mapState: MapState
   geometries: LineGeometry[]
-  animated?: boolean  // false while scrubbing → instant, true while playing → draw animation
+  animated?: boolean
 }
 
 export default function MapView({ stations, mapState, geometries, animated = false }: Props) {
   const stationMap = new Map(stations.map(s => [s.id, s]))
 
-  // DOM refs – stable across renders
   const pathRefs    = useRef<Map<string, SVGPathElement>>(new Map())
   const stationRefs = useRef<Map<string, SVGGElement>>(new Map())
 
-  // Animation book-keeping (all in refs, no setState per frame)
   const lineAnimRef       = useRef<Map<string, LineAnim>>(new Map())
   const prevLineIdsRef    = useRef<Set<string>>(new Set())
   const prevStationIdsRef = useRef<Set<string>>(new Set())
@@ -76,53 +92,69 @@ export default function MapView({ stations, mapState, geometries, animated = fal
   // ── RAF loop ────────────────────────────────────────────────────────────────
 
   function runRaf() {
-    if (rafRef.current !== null) return  // already running
+    if (rafRef.current !== null) return
+
+    function setStationScale(sid: string, scale: number, positions: Map<string, StationPos>) {
+      const el  = stationRefs.current.get(sid)
+      const pos = positions.get(sid)
+      if (!el || !pos) return
+      const tr = stationScaleTransform(pos.x, pos.y, scale)
+      if (tr) el.setAttribute('transform', tr)
+      else    el.removeAttribute('transform')
+    }
 
     function frame() {
       const now = performance.now()
       let anyActive = false
 
       for (const [lineId, anim] of lineAnimRef.current) {
-        const rawT    = (now - anim.startTime) / ANIM_MS
-        const t       = Math.min(1, rawT)
-        const drawn   = anim.totalLength * easeOut(t)
+        const elapsed = now - anim.startTime
+        // Total time = phaseA + lineDraw + last station arrive animation
+        const TOTAL_MS = anim.phaseAMs + ANIM_MS + STATION_ARRIVE_MS
 
         const pathEl = pathRefs.current.get(lineId)
-        if (pathEl) {
-          if (anim.animDirection === 'end') {
-            // Draw from the end: grow a dash at the tail while the leading gap shrinks
-            const gap = anim.totalLength - drawn
-            pathEl.style.strokeDasharray  = `0 ${gap} ${drawn}`
-            pathEl.style.strokeDashoffset = '0'
-          } else {
-            // Draw from the start: standard dashoffset trick
-            pathEl.style.strokeDashoffset = String(anim.totalLength - drawn)
-          }
+
+        // ── Phase A: start station appears ──────────────────────────────────
+        if (anim.phaseAMs > 0) {
+          const scaleT = easeOut(Math.min(1, elapsed / anim.phaseAMs))
+          setStationScale(anim.startStationId, scaleT, anim.stationPositions)
         }
 
-        // Reveal stations as the line reaches them.
-        // For 'end' direction, a station at arc-distance d from start is reached
-        // when the drawn tail has grown past (totalLength - d) from the end.
+        // ── Phase B: line draws + stations arrive ───────────────────────────
+        const lineElapsed = Math.max(0, elapsed - anim.phaseAMs)
+        const lineT       = Math.min(1, lineElapsed / ANIM_MS)
+        const drawn       = anim.totalLength * easeInOut(lineT)
+
+        if (pathEl) pathEl.style.strokeDashoffset = String(anim.totalLength - drawn)
+
         for (const [sid, dist] of anim.stationDistances) {
-          const threshold = anim.animDirection === 'end'
-            ? anim.totalLength - dist
-            : dist
-          if (anim.newStationIds.has(sid) && drawn >= threshold) {
-            const el = stationRefs.current.get(sid)
-            if (el) el.style.visibility = 'visible'
+          if (sid === anim.startStationId && anim.phaseAMs > 0) continue
+          if (!anim.newStationIds.has(sid)) continue
+
+          // Trigger station's appear animation when line reaches it
+          if (drawn >= dist && !anim.stationAppearTimes.has(sid)) {
+            anim.stationAppearTimes.set(sid, now)
+          }
+          const appearStart = anim.stationAppearTimes.get(sid)
+          if (appearStart !== undefined) {
+            const scaleT = easeOut(Math.min(1, (now - appearStart) / STATION_ARRIVE_MS))
+            setStationScale(sid, scaleT, anim.stationPositions)
           }
         }
 
-        if (t < 1) {
-          anyActive = true
-        } else {
-          // Finished: strip dasharray so the element returns to normal
-          if (pathEl) { pathEl.style.strokeDasharray = ''; pathEl.style.strokeDashoffset = '' }
+        // ── Completion check ─────────────────────────────────────────────────
+        if (elapsed >= TOTAL_MS) {
+          if (pathEl) {
+            if (anim.animDirection === 'end') pathEl.setAttribute('d', anim.forwardPathD)
+            pathEl.style.strokeDasharray  = ''
+            pathEl.style.strokeDashoffset = ''
+          }
           for (const sid of anim.newStationIds) {
-            const el = stationRefs.current.get(sid)
-            if (el) el.style.visibility = 'visible'
+            setStationScale(sid, 1, anim.stationPositions)
           }
           lineAnimRef.current.delete(lineId)
+        } else {
+          anyActive = true
         }
       }
 
@@ -136,9 +168,7 @@ export default function MapView({ stations, mapState, geometries, animated = fal
     if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
   }
 
-  // ── Detect mapState changes and start animations ─────────────────────────────
-  // useLayoutEffect fires before paint → paths are in DOM but not yet painted,
-  // so we can set dashoffset = totalLength to hide them before the first frame.
+  // ── Detect mapState changes and start animations ──────────────────────────
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useLayoutEffect(() => {
@@ -146,14 +176,17 @@ export default function MapView({ stations, mapState, geometries, animated = fal
     const currentStationIds = mapState.activeStationIds
 
     if (!animated) {
-      // Scrub mode: cancel in-flight animations and restore DOM immediately
       stopRaf()
       for (const [lineId, anim] of lineAnimRef.current) {
         const p = pathRefs.current.get(lineId)
-        if (p) { p.style.strokeDasharray = ''; p.style.strokeDashoffset = '' }
+        if (p) {
+          if (anim.animDirection === 'end') p.setAttribute('d', anim.forwardPathD)
+          p.style.strokeDasharray  = ''
+          p.style.strokeDashoffset = ''
+        }
         for (const sid of anim.newStationIds) {
           const el = stationRefs.current.get(sid)
-          if (el) el.style.visibility = 'visible'
+          if (el) { el.removeAttribute('transform'); el.style.visibility = 'visible' }
         }
       }
       lineAnimRef.current = new Map()
@@ -174,40 +207,63 @@ export default function MapView({ stations, mapState, geometries, animated = fal
       const pathEl = pathRefs.current.get(lineId)
       if (!pathEl) continue
 
-      const totalLength    = pathEl.getTotalLength()
-      const geo            = geometries.find(g => g.lineId === lineId)
-      const animDirection  = geo?.animDirection ?? 'start'
+      const geo           = geometries.find(g => g.lineId === lineId)
+      const animDirection = geo?.animDirection ?? 'start'
+      const activeLine    = mapState.activeLines.find(al => al.line.id === lineId)!
 
-      // Hide path before first paint
+      const forwardPathD = pathEl.getAttribute('d') ?? ''
+
       if (animDirection === 'end') {
-        pathEl.style.strokeDasharray  = `0 ${totalLength} 0`
-        pathEl.style.strokeDashoffset = '0'
-      } else {
-        pathEl.style.strokeDasharray  = String(totalLength)
-        pathEl.style.strokeDashoffset = String(totalLength)
+        const reversedPts = buildLinePoints(activeLine.stationIds, stationMap, geo).reverse()
+        pathEl.setAttribute('d', catmullRomPath(reversedPts))
       }
 
-      // Measure arc distance for each station on this line
-      const activeLine       = mapState.activeLines.find(al => al.line.id === lineId)!
+      const totalLength = pathEl.getTotalLength()
+      pathEl.style.strokeDasharray  = String(totalLength)
+      pathEl.style.strokeDashoffset = String(totalLength)
+
       const stationDistances = new Map<string, number>()
       for (const sid of activeLine.stationIds) {
         const st = stationMap.get(sid)
         if (st) stationDistances.set(sid, findDistOnPath(pathEl, st.x, st.y))
       }
 
-      // Hide stations that are truly new (not already on another active line)
       const lineNewStations = new Set(activeLine.stationIds.filter(id => newStationIds.has(id)))
+
+      // Build stationPositions for all new stations
+      const stationPositions = new Map<string, StationPos>()
+      for (const sid of lineNewStations) {
+        const st = stationMap.get(sid)
+        if (st) stationPositions.set(sid, { x: st.x, y: st.y })
+      }
+
+      // Determine which station the animation starts from
+      const ids = activeLine.stationIds
+      const startStationId = animDirection === 'end' ? ids[ids.length - 1] : ids[0]
+
+      // Hide all new stations at scale 0 (instead of visibility:hidden)
       for (const sid of lineNewStations) {
         const el = stationRefs.current.get(sid)
-        if (el) el.style.visibility = 'hidden'
+        const pos = stationPositions.get(sid)
+        if (el && pos) {
+          el.style.visibility = 'visible'
+          el.setAttribute('transform', stationScaleTransform(pos.x, pos.y, 0))
+        }
       }
+
+      const phaseAMs = lineNewStations.has(startStationId) ? STATION_APPEAR_MS : 0
 
       lineAnimRef.current.set(lineId, {
         startTime: performance.now(),
         totalLength,
         animDirection,
+        forwardPathD,
+        startStationId,
+        phaseAMs,
+        stationPositions,
         newStationIds: lineNewStations,
         stationDistances,
+        stationAppearTimes: new Map(),
       })
     }
 

@@ -1,8 +1,14 @@
 // アニメーション・タイミング設定
 
 const paramSettings = {
-  // 路線描画アニメーションの長さ (ms)
-  animDurationMs: 1400,
+  // (a) アニメーション開始駅が出現するまでの時間 (ms)
+  stationAppearMs: 400,
+
+  // 路線描画アニメーションの長さ (ms) ── 開始駅出現完了後に開始
+  animDurationMs: 4000,
+
+  // (b) 途中・終了駅が出現するまでの時間 (ms)
+  stationArriveMs: 300,
 
   // アニメーション完了後、次の年に進むまでの待機時間 (ms)
   pauseAfterAnimMs: 600,

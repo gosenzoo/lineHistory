@@ -42,7 +42,7 @@ export default function RailwayApp() {
       e => e.type === 'line_open' && parseInt(e.date) === year
     )
     const delay = hasLineOpen
-      ? params.animDurationMs + params.pauseAfterAnimMs
+      ? params.stationAppearMs + params.animDurationMs + params.pauseAfterAnimMs
       : params.yearDurationMs
 
     const timer = setTimeout(() => {
